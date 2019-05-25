@@ -16,12 +16,13 @@ def get_char_vocab(input_filenames, output_filename):
   vocab = sorted(list(vocab))
   with open(output_filename, "w") as f:
     for char in vocab:
-      f.write(u"{}\n".format(char).encode("utf8"))
+      f.write("{}\n".format(char))
   print("Wrote {} characters to {}".format(len(vocab), output_filename))
 
 def get_char_vocab_language(language):
   get_char_vocab(["{}.{}.jsonlines".format(partition, language) for partition in ("train", "dev", "test")], "char_vocab.{}.txt".format(language))
 
-get_char_vocab_language("english")
+#get_char_vocab_language("english")
+get_char_vocab_language("friends")
 get_char_vocab_language("chinese")
 get_char_vocab_language("arabic")

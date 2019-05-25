@@ -39,4 +39,19 @@ python minimize.py
 python get_char_vocab.py
 
 python filter_embeddings.py glove.840B.300d.txt train.english.jsonlines dev.english.jsonlines
+python3 train.py best
+
 python cache_elmo.py train.english.jsonlines dev.english.jsonlines
+
+python filter_embeddings.py glove.840B.300d.txt train.friends.jsonlines dev.friends.jsonlines
+python3 train.py best
+
+python filter_embeddings.py glove.840B.300d.txt train.friends.jsonlines dev.friends.jsonlines
+nohup python3 -u train.py best &
+
+python cache_elmo.py train.friends.jsonlines dev.friends.jsonlines
+
+nohup python3 -u train.py lo &> lo.out &
+
+nohup python3 -u train.py hi &> hi.out &
+

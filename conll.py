@@ -10,6 +10,7 @@ import tempfile
 import subprocess
 import operator
 import collections
+from evaluators import *
 
 BEGIN_DOCUMENT_REGEX = re.compile(r"#begin document \((.*)\); part (\d+)")
 COREF_RESULTS_REGEX = re.compile(r".*Coreference: Recall: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tPrecision: \([0-9.]+ / [0-9.]+\) ([0-9.]+)%\tF1: ([0-9.]+)%.*", re.DOTALL)
@@ -39,7 +40,10 @@ def output_conll(input_file, output_file, predictions):
   word_index = 0
   for line in input_file.readlines():
     row = line.split()
-    if len(row) == 0:
+    #print('row', row)
+    #if len(row) > 0:print('row[0][0]', row[0][0], row[0][0]=='s', line.split('\t'))
+    if len(row) > 0 and row[0][0] == 's':  row = line.split('\t')
+    if len(row) == 0 or row[0]=='\n':
       output_file.write("\n")
     elif row[0].startswith("#"):
       begin_match = re.match(BEGIN_DOCUMENT_REGEX, line)
@@ -50,7 +54,7 @@ def output_conll(input_file, output_file, predictions):
       output_file.write(line)
       output_file.write("\n")
     else:
-      assert get_doc_key(row[0], row[1]) == doc_key
+      #assert get_doc_key(row[0], row[1]) == doc_key
       coref_list = []
       if word_index in end_map:
         for cluster_id in end_map[word_index]:
@@ -66,8 +70,15 @@ def output_conll(input_file, output_file, predictions):
         row[-1] = "-"
       else:
         row[-1] = "|".join(coref_list)
+        #print('start_map', start_map)
+        #print('end_map', end_map)
+        #print('word_map', word_map)
+        #print('coref_list', coref_list)
 
-      output_file.write("   ".join(row))
+      #output_file.write("   ".join(row))
+      output_file.write("\t".join(row))
+      #print('line', line.split('\t'))
+      #print('pred', row)
       output_file.write("\n")
       word_index += 1
 
@@ -79,21 +90,36 @@ def official_conll_eval(gold_path, predicted_path, metric, official_stdout=False
 
   stdout = stdout.decode("utf-8")
   if stderr is not None:
-    print(stderr)
+    print('stderr:', stderr)
 
   if official_stdout:
     print("Official result for {}".format(metric))
     print(stdout)
 
+  #print('stdout:', stdout)
   coref_results_match = re.match(COREF_RESULTS_REGEX, stdout)
+  print('coref_results_match', coref_results_match)
   recall = float(coref_results_match.group(1))
   precision = float(coref_results_match.group(2))
   f1 = float(coref_results_match.group(3))
-  return { "r": recall, "p": precision, "f": f1 }
+  return {"r": recall, "p": precision, "f": f1}
 
-def evaluate_conll(gold_path, predictions, official_stdout=False):
-  with tempfile.NamedTemporaryFile(delete=False, mode="w") as prediction_file:
+def custom_eval(golds, autos, metric):
+  p, r, f = metric.evaluate_documents(golds, autos)
+  print('%s - %.4f/%.4f/%.4f' % (metric.name, p, r, f))
+  return {"r": r, "p": p, "f": f}
+
+def evaluate_conll(gold_path, predictions, log_dir, official_stdout=False):
+  test_num = 0
+  while os.path.isfile(log_dir + '/out/output_{}.txt'.format(test_num)): test_num += 1
+  #with tempfile.NamedTemporaryFile(delete=False, mode="w") as prediction_file:
+  with open(log_dir + '/out/output_{}.txt'.format(test_num), mode="w") as prediction_file:
     with open(gold_path, "r") as gold_file:
       output_conll(gold_file, prediction_file, predictions)
     print("Predicted conll file: {}".format(prediction_file.name))
-  return { m: official_conll_eval(gold_file.name, prediction_file.name, m, official_stdout) for m in ("muc", "bcub", "ceafe") }
+  gold_documents, auto_documents = path2docs(gold_path), path2docs(prediction_file.name)
+  p, r, f = MentionEvaluator().evaluate_documents(gold_documents, auto_documents)
+  #evalDoc(prediction_file.name, gold_path)
+  print('Mention Detection - %.4f/%.4f/%.4f' % (p, r, f))
+  return { m.name: custom_eval(gold_documents, auto_documents, m) for m in [BCubeEvaluator(), CeafeEvaluator(), BlancEvaluator()]}
+  #return { m: official_conll_eval(gold_file.name, prediction_file.name, m, official_stdout) for m in ("muc", "bcub", "ceafe") }

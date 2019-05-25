@@ -13,6 +13,19 @@ import collections
 import util
 import conll
 
+Names = []
+Name2id = {}
+
+def getNameId(name, language):
+  #if language != 'friends':
+  try:
+    return int(name)
+  except:
+    if name not in Name2id:
+      Name2id[name] = len(Names)
+      Names.append(name)
+    return Name2id[name]
+
 class DocumentState(object):
   def __init__(self):
     self.doc_key = None
@@ -24,7 +37,7 @@ class DocumentState(object):
     self.const_stack = []
     self.ner = {}
     self.ner_stack = []
-    self.clusters = collections.defaultdict(list)
+    self.clusters = collections.defaultdict(set)
     self.coref_stacks = collections.defaultdict(list)
 
   def assert_empty(self):
@@ -55,7 +68,15 @@ class DocumentState(object):
     return [(s,e,l) for (s,e),l in span_dict.items()]
 
   def finalize(self):
+    merges = 0
     merged_clusters = []
+    #print('self.clusters.values()',self.clusters.values())
+    #exit(1)
+    #print('sent', len(self.sentences),self.sentences)
+    #print('self.clusters', len(self.clusters), self.clusters)
+    #print('self.clusters.values()', self.clusters.values())
+    #exit(1)
+    """
     for c1 in self.clusters.values():
       existing = None
       for m in c1:
@@ -66,22 +87,46 @@ class DocumentState(object):
         if existing is not None:
           break
       if existing is not None:
-        print("Merging clusters (shouldn't happen very often.)")
+        #print("Merging clusters (shouldn't happen very often.)")
+        merges += 1
         existing.update(c1)
       else:
         merged_clusters.append(set(c1))
+    if merges>0: print("Merging clusters (shouldn't happen very often.) =", merges)
     merged_clusters = [list(c) for c in merged_clusters]
     all_mentions = util.flatten(merged_clusters)
-    assert len(all_mentions) == len(set(all_mentions))
+    print('merged_clusters', len(merged_clusters), merged_clusters)
+    ans = [list(c) for c in self.clusters.values()]
+    print('ans,', len(ans), ans)
+    exit(1)
 
-    return {
+    if not len(all_mentions) == len(set(all_mentions)):
+      ss = sorted(all_mentions)
+      for i in range(len(ss) - 1):
+        if ss[i] == ss[i+1]:
+          print(ss[i])
+      print(ss)
+    assert len(all_mentions) <= len(set(all_mentions)) + 1
+    """
+    # assert len(all_mentions) == len(set(all_mentions))
+    # print(len(all_mentions), len(set(all_mentions)))
+    #print('self.clusters.values()', list(self.clusters.values()))
+    clusters = set(tuple(set(tuple(c))) for c in self.clusters.values())
+    #print('clusters', clusters)
+    old = {
       "doc_key": self.doc_key,
       "sentences": self.sentences,
       "speakers": self.speakers,
-      "constituents": self.span_dict_to_list(self.constituents),
-      "ner": self.span_dict_to_list(self.ner),
-      "clusters": merged_clusters
+      #"constituents": self.span_dict_to_list(self.constituents),
+      #"ner": self.span_dict_to_list(self.ner),
+      "clusters": [list(c) for c in clusters] # merged_clusters
     }
+    #print('old', old["clusters"])
+    #exit(1)
+    ans = collections.OrderedDict()
+    for k,v in old.items():
+      ans[k] = v
+    return ans
 
 def normalize_word(word, language):
   if language == "arabic":
@@ -111,6 +156,7 @@ def handle_bit(word_index, bit, stack, spans):
     current_idx = next_idx
 
   for c in close_parens:
+    if c!=')': print(c,'instead of )')
     assert c == ")"
     open_index, label = stack.pop()
     current_span = (open_index, word_index)
@@ -123,6 +169,7 @@ def handle_bit(word_index, bit, stack, spans):
     spans[current_span] = label
 
 def handle_line(line, document_state, language, labels, stats):
+  #print(line)
   begin_document_match = re.match(conll.BEGIN_DOCUMENT_REGEX, line)
   if begin_document_match:
     document_state.assert_empty()
@@ -133,12 +180,14 @@ def handle_line(line, document_state, language, labels, stats):
     finalized_state = document_state.finalize()
     stats["num_clusters"] += len(finalized_state["clusters"])
     stats["num_mentions"] += sum(len(c) for c in finalized_state["clusters"])
-    labels["{}_const_labels".format(language)].update(l for _, _, l in finalized_state["constituents"])
-    labels["ner"].update(l for _, _, l in finalized_state["ner"])
+    #labels["{}_const_labels".format(language)].update(l for _, _, l in finalized_state["constituents"])
+    #labels["ner"].update(l for _, _, l in finalized_state["ner"])
     return finalized_state
   else:
-    row = line.split()
-    if len(row) == 0:
+    #row = line.split()
+    row = line.split('\t') if language == 'friends' else line.split()
+    #print(row)
+    if len(row) == 0 or row[0] == '\n':
       stats["max_sent_len_{}".format(language)] = max(len(document_state.text), stats["max_sent_len_{}".format(language)])
       stats["num_sents_{}".format(language)] += 1
       document_state.sentences.append(tuple(document_state.text))
@@ -152,8 +201,9 @@ def handle_line(line, document_state, language, labels, stats):
     word = normalize_word(row[3], language)
     parse = row[5]
     speaker = row[9]
+    #speakers = row[9].split('|') # todo plural speakers
     ner = row[10]
-    coref = row[-1]
+    coref = row[-1].rstrip()  #row[-1][:-1] if language=='friends' else row[-1]
 
     word_index = len(document_state.text) + sum(len(s) for s in document_state.sentences)
     document_state.text.append(word)
@@ -163,18 +213,20 @@ def handle_line(line, document_state, language, labels, stats):
     handle_bit(word_index, ner, document_state.ner_stack, document_state.ner)
 
     if coref != "-":
+
       for segment in coref.split("|"):
+        #if language=='friends' and word_index==3032: print(row, segment)
         if segment[0] == "(":
           if segment[-1] == ")":
-            cluster_id = int(segment[1:-1])
-            document_state.clusters[cluster_id].append((word_index, word_index))
+            cluster_id = getNameId(segment[1:-1], language)
+            document_state.clusters[cluster_id].add((word_index, word_index))
           else:
-            cluster_id = int(segment[1:])
+            cluster_id = getNameId(segment[1:], language)
             document_state.coref_stacks[cluster_id].append(word_index)
         else:
-          cluster_id = int(segment[:-1])
+          cluster_id = getNameId(segment[:-1], language)
           start = document_state.coref_stacks[cluster_id].pop()
-          document_state.clusters[cluster_id].append((start, word_index))
+          document_state.clusters[cluster_id].add((start, word_index))
     return None
 
 def minimize_partition(name, language, extension, labels, stats):
@@ -197,15 +249,24 @@ def minimize_partition(name, language, extension, labels, stats):
 def minimize_language(language, labels, stats):
   minimize_partition("dev", language, "v4_gold_conll", labels, stats)
   minimize_partition("train", language, "v4_gold_conll", labels, stats)
+  #if language == 'friends':
+    #minimize_partition("singMin_train", language, "v4_gold_conll", labels, stats)
+    #minimize_partition("singMax_train", language, "v4_gold_conll", labels, stats)
   minimize_partition("test", language, "v4_gold_conll", labels, stats)
 
 if __name__ == "__main__":
   labels = collections.defaultdict(set)
   stats = collections.defaultdict(int)
-  minimize_language("english", labels, stats)
-  minimize_language("chinese", labels, stats)
-  minimize_language("arabic", labels, stats)
+  #minimize_language("english", labels, stats)
+  #exit(1)
+  minimize_language('friends', labels, stats)
+  #minimize_language("chinese", labels, stats)
+  #minimize_language("arabic", labels, stats)
   for k, v in labels.items():
     print("{} = [{}]".format(k, ", ".join("\"{}\"".format(label) for label in v)))
   for k, v in stats.items():
     print("{} = {}".format(k, v))
+  minimize_partition("sing_top_train", 'friends', "v4_gold_conll", labels, stats)
+  minimize_partition("sing_min_train", 'friends', "v4_gold_conll", labels, stats)
+  minimize_partition("sing_max_train", 'friends', "v4_gold_conll", labels, stats)
+  minimize_partition("sing_none_train", 'friends', "v4_gold_conll", labels, stats)

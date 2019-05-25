@@ -14,4 +14,4 @@ if __name__ == "__main__":
   model = cm.CorefModel(config)
   with tf.Session() as session:
     model.restore(session)
-    model.evaluate(session, official_stdout=True)
+    model.evaluate(session, config["log_dir"], official_stdout=True, test=True)
